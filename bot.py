@@ -400,3 +400,35 @@ app.run_webhook(
 
 if __name__ == "__main__":
     main()
+def main() -> None:
+    if not BOT_TOKEN:
+        raise RuntimeError("BOT_TOKEN не задан")
+    if not ADMIN_CHAT_ID:
+        raise RuntimeError("ADMIN_CHAT_ID не задан")
+    if not RENDER_EXTERNAL_HOSTNAME:
+        raise RuntimeError("RENDER_EXTERNAL_HOSTNAME не задан")
+
+    webhook_path = BOT_TOKEN
+    webhook_url = f"https://{RENDER_EXTERNAL_HOSTNAME}/{webhook_path}"
+
+    app = Application.builder().token(BOT_TOKEN).build()
+
+    app.add_handler(CommandHandler("start", start))
+    app.add_handler(CallbackQueryHandler(callback_router))
+    app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, text_router))
+
+    loop = asyncio.new_event_loop()
+    asyncio.set_event_loop(loop)
+
+    app.run_webhook(
+        listen="0.0.0.0",
+        port=PORT,
+        url_path=webhook_path,
+        webhook_url=webhook_url,
+        drop_pending_updates=True,
+        close_loop=False,
+    )
+
+
+if __name__ == "__main__":
+    main()

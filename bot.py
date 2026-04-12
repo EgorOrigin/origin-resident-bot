@@ -1,34 +1,15 @@
-import json
 import logging
 import os
-from datetime import datetime
-from pathlib import Path
 
-from telegram import (
-    InlineKeyboardButton,
-    InlineKeyboardMarkup,
-    ReplyKeyboardMarkup,
-    ReplyKeyboardRemove,
-    Update,
-)
+from telegram import InlineKeyboardButton, InlineKeyboardMarkup, Update
 from telegram.ext import (
     Application,
     CallbackQueryHandler,
     CommandHandler,
     ContextTypes,
-    ConversationHandler,
     MessageHandler,
     filters,
 )
-
-# =========================
-# НАСТРОЙКИ
-# =========================
-
-BOT_TOKEN = os.getenv("BOT_TOKEN")
-ADMIN_CHAT_ID = int(os.getenv("ADMIN_CHAT_ID"))
-
-DATA_FILE = Path("responses.json")
 
 logging.basicConfig(
     format="%(asctime)s - %(name)s - %(levelname)s - %(message)s",
@@ -36,52 +17,103 @@ logging.basicConfig(
 )
 logger = logging.getLogger(__name__)
 
-# =========================
-# СОСТОЯНИЯ АНКЕТЫ
-# =========================
-(
-    AGE,
-    CITY,
-    ACTIVITY,
-    STATUS,
-    EXPERIENCE,
-    BEST_MONTH,
-    TIME_ORIGIN,
-    PROJECT_EXP,
-    VALUE_TO_CLUB,
-    WHY_ORIGIN,
-    MAIN_REQUEST,
-) = range(11)
+BOT_TOKEN = os.getenv("BOT_TOKEN")
+ADMIN_CHAT_ID = int(os.getenv("ADMIN_CHAT_ID", "0"))
+PORT = int(os.getenv("PORT", "10000"))
+RENDER_EXTERNAL_HOSTNAME = os.getenv("RENDER_EXTERNAL_HOSTNAME")
+
+STEP_AGE = "age"
+STEP_CITY = "city"
+STEP_ACTIVITY = "activity"
+STEP_STATUS = "status"
+STEP_EXPERIENCE = "experience"
+STEP_BEST_MONTH = "best_month"
+STEP_TIME = "time_origin"
+STEP_PROJECT_EXP = "project_exp"
+STEP_VALUE_MULTI = "value_multi"
+STEP_VALUE_OTHER = "value_other"
+STEP_REQUEST = "main_request"
+STEP_REQUEST_OTHER = "main_request_other"
+
+STATUS_OPTIONS = {
+    "entrepreneur": "Предприниматель",
+    "freelancer": "Фрилансер",
+    "hybrid": "Совмещаю с наймом",
+    "employment": "В найме",
+}
+
+EXPERIENCE_OPTIONS = {
+    "lt1": "До 1 года",
+    "1_2": "1–2 года",
+    "3_5": "3–5 лет",
+    "5p": "5+ лет",
+}
+
+BEST_MONTH_OPTIONS = {
+    "lt100": "До 100 000 ₽",
+    "100_300": "100 000–300 000 ₽",
+    "300_1000": "300 000–1 000 000 ₽",
+    "1000p": "1 000 000 ₽+",
+}
+
+TIME_OPTIONS = {
+    "lt5": "До 5 часов",
+    "5_10": "5–10 часов",
+    "10_20": "10–20 часов",
+    "20p": "20+ часов",
+}
+
+PROJECT_EXP_OPTIONS = {
+    "many": "Да, неоднократно",
+    "few": "Да, 1–2 раза",
+    "partial": "Частично участвовал",
+    "none": "Нет",
+}
+
+VALUE_OPTIONS = {
+    "sales": "Продажи",
+    "marketing": "Маркетинг",
+    "ads": "Реклама",
+    "reels": "Съёмка рилсов / контент",
+    "design": "Дизайн",
+    "dev": "Разработка",
+    "mvp": "Запуск MVP",
+    "prod": "Продюсирование",
+    "legal": "Юридические вопросы",
+    "finance": "Финансы / инвестиции",
+    "network": "Сильный нетворк",
+}
+
+REQUEST_OPTIONS = {
+    "grow": "Хочу кратно вырасти за год",
+    "circle": "Хочу найти сильное окружение",
+    "launch": "Хочу запускать новые проекты в команде",
+    "focus": "Хочу усилить дисциплину и фокус",
+    "income": "Хочу выйти на новый уровень дохода",
+    "env": "Хочу войти в сильную среду предпринимателей",
+}
 
 
-def append_response(payload: dict) -> None:
-    records = []
-    if DATA_FILE.exists():
-        try:
-            records = json.loads(DATA_FILE.read_text(encoding="utf-8"))
-        except json.JSONDecodeError:
-            records = []
-
-    records.append(payload)
-    DATA_FILE.write_text(
-        json.dumps(records, ensure_ascii=False, indent=2),
-        encoding="utf-8",
-    )
+def make_single_keyboard(prefix: str, options: dict[str, str]) -> InlineKeyboardMarkup:
+    rows = [
+        [InlineKeyboardButton(label, callback_data=f"{prefix}:{code}")]
+        for code, label in options.items()
+    ]
+    return InlineKeyboardMarkup(rows)
 
 
-def build_keyboard(options: list[str]) -> ReplyKeyboardMarkup:
-    return ReplyKeyboardMarkup(
-        [[option] for option in options],
-        resize_keyboard=True,
-        one_time_keyboard=True,
-    )
+def make_multi_value_keyboard(selected: list[str]) -> InlineKeyboardMarkup:
+    rows = []
+    for code, label in VALUE_OPTIONS.items():
+        text = f"✅ {label}" if code in selected else label
+        rows.append([InlineKeyboardButton(text, callback_data=f"valtoggle:{code}")])
+
+    rows.append([InlineKeyboardButton("Другое", callback_data="valother")])
+    rows.append([InlineKeyboardButton("Готово", callback_data="valdone")])
+    return InlineKeyboardMarkup(rows)
 
 
-async def start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    keyboard = InlineKeyboardMarkup(
-        [[InlineKeyboardButton("Начать анкету", callback_data="start_form")]]
-    )
-
+async def send_intro(target, context: ContextTypes.DEFAULT_TYPE) -> None:
     text = (
         "Привет. Это предварительный отбор в клуб Origin.\n\n"
         "Origin — закрытая группа предпринимателей и сильных фрилансеров, "
@@ -89,219 +121,276 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         "Анкета займёт 3–5 минут.\n"
         "Отвечай честно: мы отбираем не идеальных, а подходящих людей."
     )
+    keyboard = InlineKeyboardMarkup(
+        [[InlineKeyboardButton("Начать анкету", callback_data="start_form")]]
+    )
+    await target.reply_text(text, reply_markup=keyboard)
 
-    if update.message:
-        await update.message.reply_text(text, reply_markup=keyboard)
-    else:
-        await update.callback_query.message.reply_text(text, reply_markup=keyboard)
+
+async def start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    context.user_data.clear()
+    await send_intro(update.message, context)
 
 
-async def begin_form(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
+async def callback_router(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     query = update.callback_query
     await query.answer()
+    data = query.data
 
-    context.user_data.clear()
+    if data == "start_form":
+        context.user_data.clear()
+        context.user_data["step"] = STEP_AGE
+        await query.message.reply_text("Сколько тебе лет?")
+        return
 
-    await query.message.reply_text(
-        "Сколько тебе лет?",
-        reply_markup=ReplyKeyboardRemove(),
-    )
-    return AGE
+    if data.startswith("status:"):
+        code = data.split(":", 1)[1]
+        context.user_data["status"] = STATUS_OPTIONS[code]
 
+        if code == "employment":
+            context.user_data.clear()
+            await query.message.reply_text(
+                "Спасибо за анкету.\n\n"
+                "Сейчас Origin ориентирован в первую очередь на предпринимателей "
+                "и сильных фрилансеров с высокой степенью свободы по времени."
+            )
+            return
 
-async def age_step(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
-    context.user_data["age"] = update.message.text.strip()
-    await update.message.reply_text("Из какого ты города?")
-    return CITY
-
-
-async def city_step(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
-    context.user_data["city"] = update.message.text.strip()
-    await update.message.reply_text(
-        "Чем ты занимаешься сейчас? Опиши коротко свой бизнес или фриланс-направление."
-    )
-    return ACTIVITY
-
-
-async def activity_step(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
-    context.user_data["activity"] = update.message.text.strip()
-
-    keyboard = build_keyboard(
-        ["Предприниматель", "Фрилансер", "Совмещаю с наймом", "В найме"]
-    )
-    await update.message.reply_text("Ты сейчас:", reply_markup=keyboard)
-    return STATUS
-
-
-async def status_step(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
-    status = update.message.text.strip()
-    context.user_data["status"] = status
-
-    if status == "В найме":
-        await update.message.reply_text(
-            "Спасибо за анкету.\n\n"
-            "Сейчас Origin ориентирован в первую очередь на предпринимателей "
-            "и сильных фрилансеров с высокой степенью свободы по времени.",
-            reply_markup=ReplyKeyboardRemove(),
+        context.user_data["step"] = STEP_EXPERIENCE
+        await query.message.reply_text(
+            "Сколько лет ты в бизнесе / фрилансе?",
+            reply_markup=make_single_keyboard("exp", EXPERIENCE_OPTIONS),
         )
-        return ConversationHandler.END
+        return
 
-    keyboard = build_keyboard(["До 1 года", "1–2 года", "3–5 лет", "5+ лет"])
-    await update.message.reply_text(
-        "Сколько лет ты в бизнесе / фрилансе?",
-        reply_markup=keyboard,
-    )
-    return EXPERIENCE
+    if data.startswith("exp:"):
+        code = data.split(":", 1)[1]
+        context.user_data["experience"] = EXPERIENCE_OPTIONS[code]
+        context.user_data["step"] = STEP_BEST_MONTH
+        await query.message.reply_text(
+            "Какой у тебя был лучший месяц по чистой прибыли?",
+            reply_markup=make_single_keyboard("best", BEST_MONTH_OPTIONS),
+        )
+        return
+
+    if data.startswith("best:"):
+        code = data.split(":", 1)[1]
+        context.user_data["best_month"] = BEST_MONTH_OPTIONS[code]
+        context.user_data["step"] = STEP_TIME
+        await query.message.reply_text(
+            "Сколько времени в неделю ты реально готов вкладывать в Origin?",
+            reply_markup=make_single_keyboard("time", TIME_OPTIONS),
+        )
+        return
+
+    if data.startswith("time:"):
+        code = data.split(":", 1)[1]
+        context.user_data["time_origin"] = TIME_OPTIONS[code]
+        context.user_data["step"] = STEP_PROJECT_EXP
+        await query.message.reply_text(
+            "Есть ли у тебя опыт запуска проектов с нуля?",
+            reply_markup=make_single_keyboard("proj", PROJECT_EXP_OPTIONS),
+        )
+        return
+
+    if data.startswith("proj:"):
+        code = data.split(":", 1)[1]
+        context.user_data["project_exp"] = PROJECT_EXP_OPTIONS[code]
+        context.user_data["step"] = STEP_VALUE_MULTI
+        context.user_data["value_to_club"] = []
+        await query.message.reply_text(
+            "Что ты можешь дать клубу кроме своего присутствия?\n\n"
+            "Можно выбрать несколько вариантов. Когда закончишь — нажми «Готово».",
+            reply_markup=make_multi_value_keyboard(context.user_data["value_to_club"]),
+        )
+        return
+
+    if data.startswith("valtoggle:"):
+        code = data.split(":", 1)[1]
+        selected = context.user_data.setdefault("value_to_club", [])
+        if code in selected:
+            selected.remove(code)
+        else:
+            selected.append(code)
+
+        await query.message.edit_reply_markup(
+            reply_markup=make_multi_value_keyboard(selected)
+        )
+        return
+
+    if data == "valother":
+        context.user_data["step"] = STEP_VALUE_OTHER
+        await query.message.reply_text(
+            "Напиши одним сообщением, что ещё ты можешь дать клубу."
+        )
+        return
+
+    if data == "valdone":
+        selected = context.user_data.get("value_to_club", [])
+        if not selected:
+            await query.answer("Выбери хотя бы один вариант.", show_alert=True)
+            return
+
+        context.user_data["step"] = STEP_REQUEST
+        await query.message.reply_text(
+            "С каким главным запросом ты хочешь зайти в клуб Origin?",
+            reply_markup=make_single_keyboard("req", REQUEST_OPTIONS)
+        )
+        return
+
+    if data.startswith("req:"):
+        code = data.split(":", 1)[1]
+        context.user_data["main_request"] = REQUEST_OPTIONS[code]
+        await finish_application(update, context)
+        return
 
 
-async def experience_step(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
-    context.user_data["experience"] = update.message.text.strip()
+async def text_router(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    step = context.user_data.get("step")
+    text = update.message.text.strip()
 
-    keyboard = build_keyboard(
-        ["До 100 000 ₽", "100 000–300 000 ₽", "300 000–1 000 000 ₽", "1 000 000 ₽+"]
-    )
-    await update.message.reply_text(
-        "Какой у тебя был лучший месяц по чистой прибыли?",
-        reply_markup=keyboard,
-    )
-    return BEST_MONTH
+    if not step:
+        await update.message.reply_text("Нажми /start, чтобы начать анкету.")
+        return
+
+    if step == STEP_AGE:
+        context.user_data["age"] = text
+        context.user_data["step"] = STEP_CITY
+        await update.message.reply_text("Из какого ты города?")
+        return
+
+    if step == STEP_CITY:
+        context.user_data["city"] = text
+        context.user_data["step"] = STEP_ACTIVITY
+        await update.message.reply_text(
+            "Чем ты занимаешься сейчас? "
+            "Опиши коротко свой бизнес или фриланс-направление."
+        )
+        return
+
+    if step == STEP_ACTIVITY:
+        context.user_data["activity"] = text
+        context.user_data["step"] = STEP_STATUS
+        await update.message.reply_text(
+            "Ты сейчас:",
+            reply_markup=make_single_keyboard("status", STATUS_OPTIONS),
+        )
+        return
+
+    if step == STEP_VALUE_OTHER:
+        other_values = context.user_data.setdefault("value_other_texts", [])
+        other_values.append(text)
+        context.user_data["step"] = STEP_VALUE_MULTI
+        await update.message.reply_text(
+            "Добавил. Можешь выбрать ещё варианты или нажать «Готово».",
+            reply_markup=make_multi_value_keyboard(
+                context.user_data.get("value_to_club", [])
+            ),
+        )
+        return
+
+    if step == STEP_REQUEST:
+        await update.message.reply_text(
+            "Выбери один из вариантов кнопками ниже."
+        )
+        return
+
+    if step == STEP_PROJECT_EXP:
+        await update.message.reply_text(
+            "Выбери один из вариантов кнопками ниже."
+        )
+        return
+
+    if step == STEP_BEST_MONTH:
+        await update.message.reply_text(
+            "Выбери один из вариантов кнопками ниже."
+        )
+        return
+
+    if step == STEP_TIME:
+        await update.message.reply_text(
+            "Выбери один из вариантов кнопками ниже."
+        )
+        return
+
+    if step == STEP_EXPERIENCE:
+        await update.message.reply_text(
+            "Выбери один из вариантов кнопками ниже."
+        )
+        return
+
+    if step == STEP_STATUS:
+        await update.message.reply_text(
+            "Выбери один из вариантов кнопками ниже."
+        )
+        return
+
+    await update.message.reply_text("Нажми /start, чтобы начать заново.")
 
 
-async def best_month_step(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
-    context.user_data["best_month"] = update.message.text.strip()
-
-    keyboard = build_keyboard(["До 5 часов", "5–10 часов", "10–20 часов", "20+ часов"])
-    await update.message.reply_text(
-        "Сколько времени в неделю ты реально готов вкладывать в Origin?",
-        reply_markup=keyboard,
-    )
-    return TIME_ORIGIN
-
-
-async def time_step(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
-    context.user_data["time_origin"] = update.message.text.strip()
-
-    keyboard = build_keyboard(
-        ["Да, неоднократно", "Да, 1–2 раза", "Частично участвовал", "Нет"]
-    )
-    await update.message.reply_text(
-        "Есть ли у тебя опыт запуска проектов с нуля?",
-        reply_markup=keyboard,
-    )
-    return PROJECT_EXP
-
-
-async def project_exp_step(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
-    context.user_data["project_exp"] = update.message.text.strip()
-    await update.message.reply_text(
-        "Что ты можешь дать клубу кроме своего присутствия?",
-        reply_markup=ReplyKeyboardRemove(),
-    )
-    return VALUE_TO_CLUB
-
-
-async def value_to_club_step(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
-    context.user_data["value_to_club"] = update.message.text.strip()
-    await update.message.reply_text("Почему ты хочешь попасть в Origin?")
-    return WHY_ORIGIN
-
-
-async def why_origin_step(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
-    context.user_data["why_origin"] = update.message.text.strip()
-    await update.message.reply_text(
-        "С каким главным запросом ты хочешь зайти в Origin на ближайший год?"
-    )
-    return MAIN_REQUEST
-
-
-async def main_request_step(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
-    context.user_data["main_request"] = update.message.text.strip()
-
+async def finish_application(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     user = update.effective_user
-    payload = {
-        "timestamp": datetime.utcnow().isoformat() + "Z",
-        "telegram_user_id": user.id,
-        "username": user.username,
-        "full_name": user.full_name,
-        **context.user_data,
-    }
 
-    append_response(payload)
+    selected_codes = context.user_data.get("value_to_club", [])
+    selected_values = [VALUE_OPTIONS[code] for code in selected_codes]
+
+    other_values = context.user_data.get("value_other_texts", [])
+    if other_values:
+        selected_values.extend([f"Другое: {item}" for item in other_values])
 
     admin_text = (
         "Новая анкета Origin\n\n"
         f"Имя: {user.full_name}\n"
         f"Username: @{user.username if user.username else 'нет'}\n"
         f"Telegram ID: {user.id}\n"
-        f"Возраст: {payload['age']}\n"
-        f"Город: {payload['city']}\n"
-        f"Чем занимается: {payload['activity']}\n"
-        f"Статус: {payload['status']}\n"
-        f"Опыт: {payload['experience']}\n"
-        f"Лучший месяц: {payload['best_month']}\n"
-        f"Время в неделю: {payload['time_origin']}\n"
-        f"Опыт запусков: {payload['project_exp']}\n"
-        f"Что может дать клубу: {payload['value_to_club']}\n"
-        f"Почему хочет в Origin: {payload['why_origin']}\n"
-        f"Главный запрос: {payload['main_request']}"
+        f"Возраст: {context.user_data.get('age', '')}\n"
+        f"Город: {context.user_data.get('city', '')}\n"
+        f"Чем занимается: {context.user_data.get('activity', '')}\n"
+        f"Статус: {context.user_data.get('status', '')}\n"
+        f"Опыт: {context.user_data.get('experience', '')}\n"
+        f"Лучший месяц: {context.user_data.get('best_month', '')}\n"
+        f"Время в неделю: {context.user_data.get('time_origin', '')}\n"
+        f"Опыт запусков: {context.user_data.get('project_exp', '')}\n"
+        f"Что может дать клубу: {', '.join(selected_values)}\n"
+        f"Главный запрос: {context.user_data.get('main_request', '')}"
     )
 
-    try:
-        await context.bot.send_message(chat_id=ADMIN_CHAT_ID, text=admin_text)
-    except Exception as exc:
-        logger.exception("Не удалось отправить анкету админу: %s", exc)
+    await context.bot.send_message(chat_id=ADMIN_CHAT_ID, text=admin_text)
 
-    await update.message.reply_text(
+    await update.effective_chat.send_message(
         "Спасибо. Анкета принята.\n\n"
         "Мы смотрим не только на опыт и доход, но и на зрелость, мотивацию "
         "и ценность человека для среды.\n"
-        "Если твой профиль подходит Origin, мы свяжемся с тобой лично.",
-        reply_markup=ReplyKeyboardRemove(),
+        "Если твой профиль подходит Origin, мы свяжемся с тобой лично."
     )
 
-    return ConversationHandler.END
-
-
-async def cancel(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
-    await update.message.reply_text(
-        "Анкета остановлена. Можешь начать заново командой /start",
-        reply_markup=ReplyKeyboardRemove(),
-    )
-    return ConversationHandler.END
+    context.user_data.clear()
 
 
 def main() -> None:
-    if BOT_TOKEN == "ВСТАВЬ_СЮДА_НОВЫЙ_ТОКЕН_БОТА":
-        raise ValueError("Нужно вставить реальный токен бота в BOT_TOKEN.")
-    if ADMIN_CHAT_ID == 123456789:
-        raise ValueError("Нужно вставить свой Telegram ID в ADMIN_CHAT_ID.")
+    if not BOT_TOKEN:
+        raise RuntimeError("BOT_TOKEN не задан")
+    if not ADMIN_CHAT_ID:
+        raise RuntimeError("ADMIN_CHAT_ID не задан")
+    if not RENDER_EXTERNAL_HOSTNAME:
+        raise RuntimeError("RENDER_EXTERNAL_HOSTNAME не задан")
+
+    webhook_path = BOT_TOKEN
+    webhook_url = f"https://{RENDER_EXTERNAL_HOSTNAME}/{webhook_path}"
 
     app = Application.builder().token(BOT_TOKEN).build()
 
-    conv_handler = ConversationHandler(
-        entry_points=[
-            CommandHandler("start", start),
-            CallbackQueryHandler(begin_form, pattern="^start_form$"),
-        ],
-        states={
-            AGE: [MessageHandler(filters.TEXT & ~filters.COMMAND, age_step)],
-            CITY: [MessageHandler(filters.TEXT & ~filters.COMMAND, city_step)],
-            ACTIVITY: [MessageHandler(filters.TEXT & ~filters.COMMAND, activity_step)],
-            STATUS: [MessageHandler(filters.TEXT & ~filters.COMMAND, status_step)],
-            EXPERIENCE: [MessageHandler(filters.TEXT & ~filters.COMMAND, experience_step)],
-            BEST_MONTH: [MessageHandler(filters.TEXT & ~filters.COMMAND, best_month_step)],
-            TIME_ORIGIN: [MessageHandler(filters.TEXT & ~filters.COMMAND, time_step)],
-            PROJECT_EXP: [MessageHandler(filters.TEXT & ~filters.COMMAND, project_exp_step)],
-            VALUE_TO_CLUB: [MessageHandler(filters.TEXT & ~filters.COMMAND, value_to_club_step)],
-            WHY_ORIGIN: [MessageHandler(filters.TEXT & ~filters.COMMAND, why_origin_step)],
-            MAIN_REQUEST: [MessageHandler(filters.TEXT & ~filters.COMMAND, main_request_step)],
-        },
-        fallbacks=[CommandHandler("cancel", cancel)],
-        allow_reentry=True,
-    )
+    app.add_handler(CommandHandler("start", start))
+    app.add_handler(CallbackQueryHandler(callback_router))
+    app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, text_router))
 
-    app.add_handler(conv_handler)
-    app.run_polling()
+    app.run_webhook(
+        listen="0.0.0.0",
+        port=PORT,
+        url_path=webhook_path,
+        webhook_url=webhook_url,
+        drop_pending_updates=True,
+    )
 
 
 if __name__ == "__main__":

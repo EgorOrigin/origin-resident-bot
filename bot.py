@@ -362,7 +362,7 @@ async def finish_application(update: Update, context: ContextTypes.DEFAULT_TYPE)
     "Спасибо. Анкета принята.\n\n"
     "Мы смотрим не только на опыт и доход, но и на зрелость, мотивацию "
     "и ценность человека для среды.\n\n"
-    "Пока можешь зайти в закрытую группу Origin по ссылке:\n"
+    "Пока можешь подать заявку в закрытую группу Origin по ссылке:\n"
     "https://t.me/+Z_WqJYh5Ikw2N2Ey"
 )
 

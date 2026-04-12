@@ -359,11 +359,12 @@ async def finish_application(update: Update, context: ContextTypes.DEFAULT_TYPE)
     await context.bot.send_message(chat_id=ADMIN_CHAT_ID, text=admin_text)
 
     await update.effective_chat.send_message(
-        "Спасибо. Анкета принята.\n\n"
-        "Мы смотрим не только на опыт и доход, но и на зрелость, мотивацию "
-        "и ценность человека для среды.\n"
-        "Если твой профиль подходит Origin, мы свяжемся с тобой лично."
-    )
+    "Спасибо. Анкета принята.\n\n"
+    "Мы смотрим не только на опыт и доход, но и на зрелость, мотивацию "
+    "и ценность человека для среды.\n\n"
+    "Пока можешь зайти в закрытую группу Origin по ссылке:\n"
+    "https://t.me/+Z_WqJYh5Ikw2N2Ey"
+)
 
     context.user_data.clear()
 

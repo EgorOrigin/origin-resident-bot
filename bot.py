@@ -1,4 +1,5 @@
 import logging
+import asyncio
 import os
 
 from telegram import InlineKeyboardButton, InlineKeyboardMarkup, Update
@@ -384,13 +385,17 @@ def main() -> None:
     app.add_handler(CallbackQueryHandler(callback_router))
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, text_router))
 
-    app.run_webhook(
-        listen="0.0.0.0",
-        port=PORT,
-        url_path=webhook_path,
-        webhook_url=webhook_url,
-        drop_pending_updates=True,
-    )
+loop = asyncio.new_event_loop()
+asyncio.set_event_loop(loop)
+
+app.run_webhook(
+    listen="0.0.0.0",
+    port=PORT,
+    url_path=webhook_path,
+    webhook_url=webhook_url,
+    drop_pending_updates=True,
+    close_loop=False,
+)
 
 
 if __name__ == "__main__":

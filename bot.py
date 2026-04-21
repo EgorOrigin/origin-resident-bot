@@ -363,7 +363,7 @@ async def finish_application(update: Update, context: ContextTypes.DEFAULT_TYPE)
     "Мы смотрим не только на опыт и доход, но и на зрелость, мотивацию "
     "и ценность человека для среды.\n\n"
     "Пока можешь подать заявку в закрытую группу Origin по ссылке:\n"
-    "https://t.me/+Z_WqJYh5Ikw2N2Ey"
+    "https://t.me/+QALVm5MFmwg1N2Qy"
 )
 
     context.user_data.clear()
